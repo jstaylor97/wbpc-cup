@@ -1,8 +1,17 @@
 export type MatchState = "pre" | "in" | "post"
 
+export type MatchEventKind = "goal" | "penalty" | "own-goal" | "missed-penalty" | "red-card"
+
+export type MatchEvent = {
+  minute: string
+  player: string
+  kind: MatchEventKind
+}
+
 export type MatchSide = {
   teamId: string
   score: number | null
+  events: MatchEvent[]
 }
 
 export type CupMatch = {
@@ -12,6 +21,7 @@ export type CupMatch = {
   completed: boolean
   postponed: boolean
   clock: string | null
+  eventsKnown: boolean
   home: MatchSide
   away: MatchSide
 }

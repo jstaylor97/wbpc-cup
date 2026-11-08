@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import crest from "../wbpc_cup_crest.png"
+import crest from "../wbpc_cup_crest_simple.png"
 import { Fixtures } from "./Fixtures"
 import { formatUpdated } from "./format"
 import { buildStandings } from "./table"

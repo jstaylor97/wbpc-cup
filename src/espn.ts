@@ -1,5 +1,5 @@
 import { CUP_TEAMS, fallbackTeams, isCupTeam } from "./teams"
-import type { CupMatch, MatchState, TeamInfo } from "./types"
+import type { CupMatch, MatchEvent, MatchEventKind, MatchState, TeamInfo } from "./types"
 
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1"
 
@@ -10,15 +10,16 @@ export async function fetchCup(season: number): Promise<{ matches: CupMatch[]; t
     fetchSchedules(season),
     fetchScoreboard().catch(() => [] as CupMatch[]),
   ])
-  const matches = applyScoreboard(schedule.matches, live)
+  const matches = await attachMissingEvents(applyScoreboard(schedule.matches, live))
   if (import.meta.env.DEV && matches.length !== 12) {
     console.warn(`Expected 12 cup matches, found ${matches.length}`)
   }
   return { matches, teams: schedule.teams }
 }
 
-export async function fetchScoreboard(): Promise<CupMatch[]> {
-  const payload = await fetchJson(`${ESPN_BASE}/scoreboard`)
+export async function fetchScoreboard(date?: string): Promise<CupMatch[]> {
+  const query = date ? `?dates=${date}` : ""
+  const payload = await fetchJson(`${ESPN_BASE}/scoreboard${query}`)
   const matches: CupMatch[] = []
   for (const event of asArray(payload.events)) {
     const match = parseMatch(event)
@@ -84,9 +85,31 @@ function overlayMatch(existing: CupMatch, live: CupMatch): CupMatch {
     completed: live.completed,
     postponed: live.postponed,
     clock: live.clock,
-    home: { teamId: existing.home.teamId, score: live.home.score },
-    away: { teamId: existing.away.teamId, score: live.away.score },
+    eventsKnown: live.eventsKnown || existing.eventsKnown,
+    home: {
+      teamId: existing.home.teamId,
+      score: live.home.score,
+      events: live.eventsKnown ? live.home.events : existing.home.events,
+    },
+    away: {
+      teamId: existing.away.teamId,
+      score: live.away.score,
+      events: live.eventsKnown ? live.away.events : existing.away.events,
+    },
   }
+}
+
+async function attachMissingEvents(matches: CupMatch[]): Promise<CupMatch[]> {
+  const dates = new Set<string>()
+  for (const match of matches) {
+    if (match.state === "pre" || match.eventsKnown) continue
+    const date = match.kickoff.slice(0, 10).replaceAll("-", "")
+    if (date) dates.add(date)
+  }
+  if (dates.size === 0) return matches
+
+  const boards = await Promise.all([...dates].map((date) => fetchScoreboard(date).catch(() => [] as CupMatch[])))
+  return boards.reduce((current, board) => applyScoreboard(current, board), matches)
 }
 
 function preferMatch(a: CupMatch, b: CupMatch): CupMatch {
@@ -144,6 +167,7 @@ function parseMatch(value: unknown): CupMatch | null {
 
   const completed =
     statusType.completed === true || typeName === "STATUS_FULL_TIME" || typeName === "STATUS_FINAL"
+  const eventsKnown = Array.isArray(competition.details)
 
   return {
     id,
@@ -151,10 +175,53 @@ function parseMatch(value: unknown): CupMatch | null {
     state,
     completed,
     postponed,
+    eventsKnown,
     clock: state === "in" ? liveClock(status, statusType) : null,
-    home: { teamId: homeId, score: scoreFor(home.score, state) },
-    away: { teamId: awayId, score: scoreFor(away.score, state) },
+    home: { teamId: homeId, score: scoreFor(home.score, state), events: eventsFor(competition, homeId) },
+    away: { teamId: awayId, score: scoreFor(away.score, state), events: eventsFor(competition, awayId) },
   }
+}
+
+function eventsFor(competition: Record<string, unknown>, teamId: string): MatchEvent[] {
+  const timed: { order: number; event: MatchEvent }[] = []
+  for (const value of asArray(competition.details)) {
+    if (!isRecord(value) || value.shootout === true) continue
+    const team = isRecord(value.team) ? value.team : {}
+    if (stringValue(team.id) !== teamId) continue
+    const kind = eventKind(value)
+    if (!kind) continue
+    const clock = isRecord(value.clock) ? value.clock : {}
+    const athletes = asArray(value.athletesInvolved).filter(isRecord)
+    const player = athletes
+      .map((athlete) => stringValue(athlete.shortName) || stringValue(athlete.displayName))
+      .filter(Boolean)
+      .join(", ")
+    timed.push({
+      order: typeof clock.value === "number" ? clock.value : Number.MAX_SAFE_INTEGER,
+      event: {
+        minute: stringValue(clock.displayValue),
+        player: player || eventFallback(kind),
+        kind,
+      },
+    })
+  }
+  return timed.sort((a, b) => a.order - b.order).map((item) => item.event)
+}
+
+function eventKind(detail: Record<string, unknown>): MatchEventKind | null {
+  if (detail.redCard === true) return "red-card"
+  if (detail.yellowCard === true) return null
+  if (detail.ownGoal === true) return "own-goal"
+  if (detail.penaltyKick === true) return detail.scoringPlay === true ? "penalty" : "missed-penalty"
+  if (detail.scoringPlay === true) return "goal"
+  return null
+}
+
+function eventFallback(kind: MatchEventKind): string {
+  if (kind === "red-card") return "Red card"
+  if (kind === "missed-penalty") return "Missed penalty"
+  if (kind === "own-goal") return "Own goal"
+  return "Goal"
 }
 
 function parseState(value: unknown): MatchState {

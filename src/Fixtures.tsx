@@ -1,7 +1,7 @@
 import { CUP_TEAMS } from "./teams"
 import { formatKickoff } from "./format"
 import { matchCounts } from "./table"
-import type { CupMatch, TeamInfo } from "./types"
+import type { CupMatch, MatchEvent, TeamInfo } from "./types"
 import { Crest } from "./Crest"
 
 export function Fixtures({ matches, teams }: { matches: CupMatch[]; teams: Record<string, TeamInfo> }) {
@@ -72,7 +72,7 @@ function Fixture({ match, teams }: { match: CupMatch; teams: Record<string, Team
     <article className={live ? "fixture is-live" : "fixture"}>
       <time dateTime={match.kickoff}>{formatKickoff(match.kickoff)}</time>
       <div className="fixture-match">
-        <TeamSide team={home} side="home" />
+        <TeamSide team={home} side="home" events={match.home.events ?? []} />
         <div className="mid">
           {live || match.completed ? (
             <span className="score">
@@ -85,20 +85,57 @@ function Fixture({ match, teams }: { match: CupMatch; teams: Record<string, Team
           )}
           {live && match.clock ? <span className="clock">{match.clock}</span> : null}
         </div>
-        <TeamSide team={away} side="away" />
+        <TeamSide team={away} side="away" events={match.away.events ?? []} />
       </div>
     </article>
   )
 }
 
-function TeamSide({ team, side }: { team: TeamInfo; side: "home" | "away" }) {
+function TeamSide({
+  team,
+  side,
+  events,
+}: {
+  team: TeamInfo
+  side: "home" | "away"
+  events: MatchEvent[]
+}) {
   return (
-    <div className={`side ${side}`} title={team.name}>
-      {side === "away" ? <Crest team={team} /> : null}
-      <span className="team-name">{team.shortName}</span>
-      {side === "home" ? <Crest team={team} /> : null}
+    <div className={`side ${side}`}>
+      <div className="side-main" title={team.name}>
+        {side === "away" ? <Crest team={team} /> : null}
+        <span className="team-name">{team.shortName}</span>
+        {side === "home" ? <Crest team={team} /> : null}
+      </div>
+      {events.length > 0 ? (
+        <ul className="events">
+          {events.map((event, index) => (
+            <li key={`${event.kind}-${event.minute}-${event.player}-${index}`}>
+              {event.kind === "red-card" ? (
+                <>
+                  <span className="red-card" aria-hidden="true" />
+                  <span className="sr-only">Red card, </span>
+                </>
+              ) : null}
+              {eventText(event)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   )
+}
+
+function eventText(event: MatchEvent): string {
+  const suffix =
+    event.kind === "penalty"
+      ? " (Pen)"
+      : event.kind === "own-goal"
+        ? " (OG)"
+        : event.kind === "missed-penalty"
+          ? " (Missed Pen)"
+          : ""
+  return `${event.player} ${event.minute}${suffix}`.replace(/\s+/g, " ").trim()
 }
 
 function sortByKickoff(matches: CupMatch[], descending = false): CupMatch[] {

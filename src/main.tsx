@@ -1,6 +1,6 @@
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
-import crest from "../wbpc_cup_crest.png"
+import crest from "../wbpc_cup_crest_simple.png"
 import { App } from "./App"
 import "./styles.css"
 
